@@ -2,3 +2,5 @@ config.json
 node_modules/
 chatgpt.js
 training.json
+information.json
+registered_channels.json

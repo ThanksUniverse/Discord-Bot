@@ -2,8 +2,91 @@ const { Client, GatewayIntentBits, EmbedBuilder, PermissionsBitField, Permission
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers] });
 const config = require("./config.json");
 const ytdl = require("ytdl-core");
+const axios = require('axios');
+const cheerio = require('cheerio');
 const Eris = require("eris");
+const slugify = require('slugify');
+const { request } = require("express");
 const bot = new Eris(config.token);
+const fs = require('fs');
+
+const informationJson = fs.readFileSync('information.json');
+const informationData = JSON.parse(informationJson);
+let currentVersion = informationData.currentVersion;
+let timesChecked = informationData.timesChecked;
+const baseLink = 'https://www.leagueoflegends.com/pt-br/news/tags/patch-notes/';
+let checkingTime = 1 // 60 Hour
+
+function updateThings() {
+	timesChecked++;
+	informationData.currentVersion = currentVersion;
+	informationData.timesChecked = timesChecked;
+	fs.writeFileSync('information.json', JSON.stringify(informationData))
+}
+
+function scrapeChampions() {
+	return axios.get('https://www.leagueoflegends.com/pt-br/champions/')
+	  .then(response => {
+		 const html = response.data;
+		 const $ = cheerio.load(html);
+ 
+		 const championNames = [];
+		 $('a.style__Text-sc-12h96bu-2').each((i, element) => {
+			const name = $(element).text().trim();
+			championNames.push(name);
+		 });
+ 
+		 // Add a delay to simulate asynchronous behavior
+		 return new Promise(resolve => {
+			setTimeout(() => {
+			  resolve(championNames);
+			}, 1000);
+		 });
+	  })
+	  .catch(error => {
+		 console.log(error);
+	  });
+ }
+
+function GlobalMessage(message) {
+	const registeredJson = fs.readFileSync('registered_channels.json');
+	const registeredChannels = JSON.parse(registeredJson);
+ 
+	// Loop through all registered channels and send the message
+	for (const channelId in registeredChannels) {
+	  const channel = client.channels.cache.get(channelId);
+	  if (channel) {
+		 channel.send(message);
+	  }
+	}
+ }
+
+function checkUpdates() {
+	axios.get(baseLink)
+		.then(response => {
+			const html = response.data;
+			const $ = cheerio.load(html);
+
+			const latestArticle = $('article').first();
+			const title = latestArticle.find('h2').text().trim();
+			const original = `${title}`;
+			const changes = slugify(original.replace(/\d+\.\d+/g, match => match.replace(".", "-")), { lower: true, remove: /[*+~.()'"!:@]/g, replacement: '-' });
+			const tempLink = 'https://www.leagueoflegends.com/pt-br/news/game-updates/';
+			const finalLink = tempLink + changes;
+
+			console.log(`Latest patch notes: ${title}\nLink: ${finalLink}`);
+			currentVersion = title;
+			if (title != currentVersion) {
+				GlobalMessage(finalLink);
+			}
+		})
+		.catch(error => {
+			console.log(error);
+		});
+	updateThings()
+};
+
+setInterval(checkUpdates, checkingTime * (60 * 60000));
 
 let commandCounter = 0;
 
@@ -191,6 +274,28 @@ client.on("messageCreate", (message) => {
 		}
 		message.channel.send(`${messageCount} notifications sent to ${targetUser.username}.`);
 		commandCounter++;
+	}
+
+	if (command === "leagueUpdates") {
+		const channel = message.channel;
+
+		// Read the registered channels from the file
+		const registeredJson = fs.readFileSync('registered_channels.json');
+		const registeredChannels = JSON.parse(registeredJson);
+
+		// Add the new channel to the registered channels
+		if (!registeredChannels[channel.id]) {
+			registeredChannels[channel.id] = {
+				name: channel.name,
+				guild: channel.guild.id
+			};
+			fs.writeFileSync('registered_channels.json', JSON.stringify(registeredChannels));
+
+			// Send a confirmation message
+			message.reply(`This channel (${channel}) has been registered to receive League of Legends update notifications.`);
+		} else {
+			message.reply(`This channel (${channel}) is already registered.`);
+		}
 	}
 
 	if (command === "companhia" || command === "joinMe" || command === "call") {
